@@ -3,7 +3,7 @@ import matplotlib.path as mpath
 import matplotlib.transforms as transforms
 
 
-def ship_model(x, y, sog, cog, scale=0.05):  # 添加缩放因子
+def ship_model(x, y, sog, cog, scale=0.01):  # 添加缩放因子
     # 自定义船形路径
     Path = mpath.Path
     ship_path = Path(

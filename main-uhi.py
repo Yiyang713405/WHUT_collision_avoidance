@@ -7,8 +7,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from Tools import convert_latlon_to_xy
 from Tools import Encounter_scenario_decision_making
-import test
 import path_planning_plot
+import invariant_waypoint_update
+from global_land_mask import globe
 from Tools import shipmodle
 import matplotlib.patches as patches
 from matplotlib.patches import Circle
@@ -186,6 +187,8 @@ def listen_channel_func():
             ts_data[i] = ts_data[i][:-3]
             ts_ships[i] = convert_latlon_to_xy.ship_latlon_to_xy(ts_data[i])
             ts_ships[i][2] = ts_ships[i][2] * 0.51444
+            if ts_ships[i][2] == 0:
+                ts_ships[i][2] += 0.15
         for i in range(len(ts_ships)):
             ts_ships[i][0] = ts_ships[i][0] - os_ship_start[0]
             ts_ships[i][1] = ts_ships[i][1] - os_ship_start[1]
@@ -194,8 +197,12 @@ def listen_channel_func():
         m = 1852  # 1 海里 = 1852 米
         safe_tcpa = 10
         safe_dcpa = 0.5
-        max_turn_angle = [30, 60]
+        max_turn_angle = [10, 15]
         invariant_waypoint = []
+        invariant_shipmeet = [0]
+        invariant_index = [float('inf')]
+        navigation_state = 'front'
+        f1, f2, f3, f4, f5, f6 = [-6, 6, 67.5, 112.5, 180, -112.5]
         # 绘图窗口建立
         # =====================================================================================================
         plt.ion()
@@ -214,12 +221,14 @@ def listen_channel_func():
             lon_speed = float(LongitudinalSpeed)
             roll_os = float(Roll)
             sog_os = np.sqrt(lat_speed ** 2 + lon_speed ** 2)
-            print(sog_os)
+            # print(sog_os)
             # ================================================================================================
             # ================================================================================================
             #  本船与目标船数据获取与转换
             # ====================================================
             os_ship = [lon_os, lat_os, sog_os, cog_os]
+            if sog_os == 0:
+                continue
             os_ship = convert_latlon_to_xy.ship_latlon_to_xy(os_ship)
             os_ship[0] = os_ship[0] - os_ship_start[0]
             os_ship[1] = os_ship[1] - os_ship_start[1]
@@ -231,56 +240,52 @@ def listen_channel_func():
             # 计算避碰算法参数
             (waypoint, cpa, avoid_ship_label, colAvoShipCount, colAvoNegShipCount, colAvoEmgShipCount, osAvoResp,
              shipMeetProp, shipColAvoProp, shipDCPA, shipTCPA, shipBearing, shipDistance, os_shipBearing, emg_situation)\
-                = (test.multi_ship_scenario_waypoint(
-                   os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os_min, ts_ships_length, max_turn_angle))
-            direct_waypoint = [os_ship[0] + sog_os * math.sin(math.radians(cog_os)) * safe_tcpa * 60,
-                               os_ship[1] + sog_os * math.cos(math.radians(cog_os)) * safe_tcpa * 60]
+                = (Encounter_scenario_decision_making.multi_ship_scenario_waypoint(
+                   os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os_min, ts_ships_length, max_turn_angle, m, f1, f2, f3, f4, f5, f6))
             # ==========================================================================================================
             # 固定路径点，在船舶有风险时路径点随风险情况改变，无风险时路径点锁定锁定
+            # 判断路径点是否在水里
+            waypoint_latlon = convert_latlon_to_xy.ship_xy_to_latlon([waypoint[0] + reference_point_x],
+                                                                     [waypoint[1] + reference_point_y])
+            waypoint_lat = waypoint_latlon[0][1]
+            waypoint_lon = waypoint_latlon[0][0]
+            on_land = globe.is_land(waypoint_lat, waypoint_lon)
             if len(invariant_waypoint) == 0:
-                invariant_waypoint.append(waypoint)
-            # ==========================================================================================================
-            # 条件准备
-            else:
-                distance_to_waypoint = (test.calculate_distance
-                                        (os_ship[0], os_ship[1], invariant_waypoint[0][0], invariant_waypoint[0][1]))
-                # 本船和路径点的距离
-                os_invariant_waypoint_vector = [invariant_waypoint[0][0] - os_ship[0],  # 本船当前位置和固定路径点的向量
-                                                invariant_waypoint[0][1] - os_ship[1]]
-                # 本船当前位置和固定路径点的向量
-                v_os = np.array(
-                    [sog_os * math.sin(math.radians(cog_os)), sog_os * math.cos(math.radians(cog_os))])  # 本船的速度向量
-                angle_os_invariant_waypoint = test.angle_of_vector(v_os,
-                os_invariant_waypoint_vector)  # 本船速度向量与本船和路径点连线的向量夹
-                # if avoid_ship_label != float('inf'):
-                #     print(avoid_ship_label)
-                #     type_index = isinstance(avoid_ship_label, float)
-                # ==========================================================================================================
-                if (avoid_ship_label != float('inf') and (
-                            shipMeetProp[avoid_ship_label] == 4 or shipMeetProp[avoid_ship_label] == 5) and
-                            emg_situation[avoid_ship_label] == 1):
-                    # 判断路径点是否需要变化
-                    print('emg_situation[avoid_ship_label]', emg_situation[avoid_ship_label])
-                    invariant_waypoint[0] = waypoint
-                if (avoid_ship_label != float('inf') and not (shipMeetProp[avoid_ship_label] == 4 or
-                    shipMeetProp[avoid_ship_label] == 5) and waypoint != invariant_waypoint[0] and
-                        waypoint != direct_waypoint):
-                    print('avoid_ship_label', avoid_ship_label)
-                    invariant_waypoint[0] = waypoint
-                # ==========================================================================================================
-                elif distance_to_waypoint < 150 or angle_os_invariant_waypoint > 90:
-                    # 判断是否到达路径点
-                    if not (max(abs(value) for value in shipTCPA) == 0 and abs(os_ship[0]) >= 0.75 * 1852):
-                        invariant_waypoint.clear()
-                        invariant_waypoint.append(waypoint)
-            # ==========================================================================================================
-                elif avoid_ship_label == float('inf'):  # 判断何时回到原航向
-                    if max(abs(value) for value in shipTCPA) == 0 and abs(os_ship[0]) >= 0.75 * 1852:
-                        towing_point = [
-                            os_ship[0] + os_ship[2] * math.sin(math.radians(cog_os_start)) * 10 * 60,
-                            os_ship[1] + os_ship[2] * math.cos(math.radians(cog_os_start)) * 10 * 60]
-                        invariant_waypoint[0] = towing_point
-                        print("shipTCPA:", shipTCPA)
+                if on_land:
+                    waypoint = [os_ship[0] + sog_os * math.sin(math.radians(cog_os)) * safe_tcpa * 60,
+                                os_ship[1] + sog_os * math.cos(math.radians(cog_os)) * safe_tcpa * 60]
+                    invariant_waypoint.append(waypoint)
+                else:
+                    invariant_waypoint.append(waypoint)
+            invariant_waypoint, navigation_state_pre = invariant_waypoint_update.waypoint_choose(invariant_waypoint,
+                                                                                       waypoint, os_ship,
+                                                                                       avoid_ship_label,
+                                                                                       shipMeetProp,
+                                                                                       emg_situation,
+                                                                                       invariant_index,
+                                                                                       invariant_shipmeet,
+                                                                                       shipTCPA, shipDCPA, safe_dcpa, m,
+                                                                                       safe_tcpa, cog_os_start,
+                                                                                       navigation_state)
+            navigation_state = navigation_state_pre
+            print(invariant_waypoint)
+            x_os, y_os, sog_os, cog_os = os_ship
+            sog_vector_os = np.array(
+                [sog_os * math.sin(math.radians(cog_os)), sog_os * math.cos(math.radians(cog_os)), 0])
+            relative_invariant_vector = np.array(
+                [invariant_waypoint[0][0] - x_os, invariant_waypoint[0][1] - y_os, 0])
+            ang_invariant_waypoint = invariant_waypoint_update.angle_of_vector(sog_vector_os,
+                                                                               relative_invariant_vector)
+            print(ang_invariant_waypoint)
+            if ang_invariant_waypoint > max_turn_angle[0]:
+                invariant_waypoint[0] = [x_os + 2 * safe_dcpa * m * math.sin(math.radians(cog_os + max_turn_angle[0])),
+                                         y_os + 2 * safe_dcpa * m * math.cos(math.radians(cog_os + max_turn_angle[0]))]
+            elif ang_invariant_waypoint < -max_turn_angle[0]:
+                invariant_waypoint[0] = [
+                    x_os + 2 * safe_dcpa * m * math.sin(math.radians(cog_os - max_turn_angle[0])),
+                    y_os + 2 * safe_dcpa * m * math.cos(math.radians(cog_os - max_turn_angle[0]))]
+            print(navigation_state)
+            print(invariant_waypoint)
             # ================================================================================================
             # 记录本船和目标船历史数据
             history_trajectory_os.append((os_ship[0], os_ship[1]))
@@ -290,14 +295,15 @@ def listen_channel_func():
                 history_distance[i].append(shipDistance[i])
                 history_dcpa[i].append(shipDCPA[i])
                 history_tcpa[i].append(shipTCPA[i])
-            print(invariant_waypoint[0])
+            # print(invariant_waypoint[0])
             # ==========================================================================================================
             path_planning_plot.path_planning_plot(invariant_waypoint[0], cpa, avoid_ship_label, colAvoShipCount,
                                                   colAvoNegShipCount, colAvoEmgShipCount, osAvoResp,
                                                   shipMeetProp, shipColAvoProp, shipDCPA, shipTCPA, shipBearing,
                                                   shipDistance, os_ship, ts_ships, reference_point_x, reference_point_y,
                                                   ts_ships_mmsi, ts_ships_name, history_trajectory_os, history_trajectory_ts,
-                                                  history_distance, history_dcpa, history_tcpa, axes, os_shipBearing, start_time)
+                                                  history_distance, history_dcpa, history_tcpa, axes, os_shipBearing,
+                                                  start_time, navigation_state)
     except Exception as e:
         print("建立监听失败，退出监听remote数据")
         print("错误信息:", str(e))  # 输出错误信息

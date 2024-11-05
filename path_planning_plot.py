@@ -1,7 +1,9 @@
 import socket
+import json
 import traceback
 from pynput import keyboard
 import TargetShipSet
+import os
 import time
 import numpy as np
 import matplotlib.pyplot as plt
@@ -97,7 +99,7 @@ def send_channel_func(delta_cmd_deg, rpm):
     # ================================
     msg = ('$LUPWM,' + str(delta_cmd_deg) + ',' + str(r2) + ',' + str(t1) + ',' + str(rpm) + '\x0a')  # 控拖轮
     # msg = ('$LUPWM,' + str(r1) + ',' + str(t1) + '\x0a')
-    print(msg)
+    # print(msg)
     me_socket.sendto(msg.encode("utf-8"), (remote_ip, remote_port))
 
     if me_socket is not None:
@@ -117,11 +119,34 @@ def calculate_direction_angle(X1, Y1, X2, Y2):
     return angle_deg
 
 
+def append_dict_to_json(file_path, new_data):
+    """
+    将新的字典数据追加到JSON文件中。
+    :param file_path: 存放JSON的文件路径
+    :param new_data: 要追加的字典数据
+    """
+    data_list = []
+    # 如果文件存在，读取其内容并反序列化为列表
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as file:
+            try:
+                data_list = json.load(file)
+                if not isinstance(data_list, list):
+                    data_list = []
+            except json.JSONDecodeError:
+                pass
+    data_list.append(new_data)
+    # 将更新后的列表序列化为JSON格式并写入文件
+    with open(file_path, 'w', encoding='utf-8') as file:
+        json.dump(data_list, file, ensure_ascii=False, indent=4)
+    print(f"新数据已追加到文件：{file_path}")
+
+
 def path_planning_plot(invariant_waypoint, cpa, avoid_ship_label, colAvoShipCount, colAvoNegShipCount, colAvoEmgShipCount,
                        osAvoResp, shipMeetProp, shipColAvoProp, shipDCPA, shipTCPA, shipBearing, shipDistance,
                        os_ship, ts_ships, reference_point_x, reference_point_y, ts_ships_mmsi, ts_ships_name,
                        history_trajectory_os, history_trajectory_ts, history_distance,
-                       history_dcpa, history_tcpa, axes, os_shipBearing, start_time):
+                       history_dcpa, history_tcpa, axes, os_shipBearing, start_time, navigation_state):
     m = 1852
     obstacles_y = []
     obstacles_x = []
@@ -179,6 +204,7 @@ def path_planning_plot(invariant_waypoint, cpa, avoid_ship_label, colAvoShipCoun
     ry = ry_bezier
     rxfinal, ryfinal = PointDelete.pd(rx, ry)
     angles = TargetShipSet.calculate_angles(rx, ry)
+    path_point = [[x, y] for x, y in zip(rx, ry)]
     # ==========================================================================================================
     # 取轨迹上等间隔的十分之的点作为样本点
     num_points = len(rx_bezier) // 10
@@ -224,6 +250,7 @@ def path_planning_plot(invariant_waypoint, cpa, avoid_ship_label, colAvoShipCoun
     colAvoPathData_keys = ["fastShipPosLon", "fastShipPosLat"]
     colAvoPathData_value = fastShipPos
     colAvoPathData = [dict(zip(colAvoPathData_keys, values)) for values in colAvoPathData_value]
+    path_point_data = [dict(zip(colAvoPathData_keys, values)) for values in path_point]
     colAvoShipData_keys = ["shipMmssiId", "shipName", "shipMeetProp", "shipColAvoProp", "shipDcpa",
                            "shipTcpa", "shipBearing", "shipDistance"]
     colAvoShipData_value = []
@@ -242,8 +269,20 @@ def path_planning_plot(invariant_waypoint, cpa, avoid_ship_label, colAvoShipCoun
         "colAvoShipData": colAvoShipData,
         "msg": "请求成功"
     }
-    print(send_data)
+    ship_data = {
+        "os_ship": os_ship,
+        "ts_ship": ts_ships,
+        "os_shipBearing": os_shipBearing,
+        "colAvoCosSpdData": colAvoCosSpdData,
+        "colAvoData": colAvoData,
+        "colAvoPathData": path_point_data,
+        "colAvoShipData": colAvoShipData,
+        }
     # ==========================================================================================================
+    # 存储船舶会遇数据
+    # if avoid_ship_label != float('inf') or (navigation_state == 'right' or navigation_state == 'left'):
+    #     append_dict_to_json("D:\\AA船舶避碰\\ColAvoDataRecord\\三船场景54.json", ship_data)
+    # # ==========================================================================================================
     # 将决策数据发送到交换机
     # producer_rabbitmq.setup_fanout_exchange_and_queue(
     #     rabbitmq_host,
@@ -274,8 +313,8 @@ def path_planning_plot(invariant_waypoint, cpa, avoid_ship_label, colAvoShipCoun
     # 控制模块输出——>>船舶操纵模型（虚拟）/舵机（实船）：
     delta_cmd_deg = (
         # ip_controller.PID(kp=0.5, ki=0.2, kd=0.02, output_min=-30, output_max=30).solve(cog_os, target_angle))
-        ip_controller.PID(kp=2, ki=0.2, kd=0.02, output_min=-30, output_max=30).solve(cog_os, target_angle))
-    print(delta_cmd_deg)
+        ip_controller.PID(kp=2, ki=0.2, kd=0.02, output_min=-15, output_max=15).solve(cog_os, target_angle))
+    # print(delta_cmd_deg)
     send_channel_func(delta_cmd_deg, ship_rpm)
     # 参数单位转换
     # ==========================================================================================================
@@ -310,17 +349,18 @@ def path_planning_plot(invariant_waypoint, cpa, avoid_ship_label, colAvoShipCoun
     patch = patches.PathPatch(ship_shape, facecolor='r', edgecolor='r', lw=2)
     axes[0, 0].add_patch(patch)
     # 绘制目标点和 CPA
-    axes[0, 0].scatter(invariant_waypoint[0] / m, invariant_waypoint[1] / m, s=50, marker='*', color='r', label='Waypoint')
-    axes[0, 0].scatter(cpa[0] / m, cpa[1] / m, s=50, marker='*', color='black', label='CPA')
+    axes[0, 0].scatter(invariant_waypoint[0] / m, invariant_waypoint[1] / m, s=20, marker='*', color='r', label='Waypoint')
+    axes[0, 0].scatter(cpa[0] / m, cpa[1] / m, s=20, marker='*', color='black', label='CPA')
     if avoid_ship_label != float('inf'):
         axes[0, 0].plot([ts_ships[int(avoid_ship_label)][0] / m, cpa[0] / m],
                         [ts_ships[int(avoid_ship_label)][1] / m, cpa[1] / m], color="grey", linestyle="--")
         # 绘制轨迹
-    axes[0, 0].plot(trajectory_os_x, trajectory_os_y, color="r", linestyle="-", label="Ship Trajectory")
+    axes[0, 0].plot(trajectory_os_x, trajectory_os_y, color="r", linestyle="-", label="Ship Trajectory", linewidth=1)
     for i in range(len(trajectory_ts_x)):
         axes[0, 0].plot(trajectory_ts_x[i], trajectory_ts_y[i], color=color_set[i], linestyle="-",
                         label="Ship Trajectory")
-    axes[0, 0].plot(rx / m, ry / m, color="r", linestyle="-", label="Planned Path")
+    axes[0, 0].plot(rx / m, ry / m, color="r", linestyle="-", label="Planned Path", lw=1)
+    # print(type(rx), rx)
     # 绘制圆圈（1000米）示意
     circle_radius = 1000 / m
     circle = Circle((x_os / m, y_os / m), circle_radius, color='r', fill=False, linewidth=2, linestyle='--',

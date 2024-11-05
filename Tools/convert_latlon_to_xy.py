@@ -69,10 +69,10 @@ def ship_xy_to_latlon(x_list, y_list):  # 单位：m
 # lon = 121
 # sog = 10
 # cog = 0
-# ship = [lat, lon, sog, cog]
+# ship = [lon, lat, sog, cog]
 # x0, y0, sog, cog = ship_latlon_to_xy(ship)
 # print(x0, y0)
-# x = [x0, x0, x0, x0, x0]
-# y = [y0, y0, y0, y0, y0]
+# x = [x0]
+# y = [y0]
 # latlon_list = ship_xy_to_latlon(x, y)
 # print(latlon_list)

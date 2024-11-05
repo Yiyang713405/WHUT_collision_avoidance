@@ -1,7 +1,6 @@
 import queue
 import numpy as np
 import matplotlib.pyplot as plt
-from Tools import EvaluationFunction
 from Tools import convert_latlon_to_xy
 from Tools import Encounter_scenario_decision_making
 from Tools import shipmodle
@@ -9,6 +8,9 @@ from Tools import PointDelete
 from service.tanker_VLCC8_L333 import VLCC8L333
 from PlanningAlgorithm import PotentialFieldPlanning
 from PlanningAlgorithm import bezier_path
+import invariant_waypoint_update
+from global_land_mask import globe
+import os
 from PlanningAlgorithm import a_star
 import matplotlib.patches as patches
 from matplotlib.patches import Circle
@@ -20,7 +22,6 @@ import threading
 import json
 import copy
 import traceback
-import TargetShipSet
 
 
 ship_param = VLCC8L333()
@@ -71,8 +72,10 @@ def consume_from_queue(queue_name, rabbitmq_host, rabbitmq_port, rabbitmq_userna
 
 def receive_messages(rabbitmq_host, rabbitmq_port, rabbitmq_username, rabbitmq_password, vhost):
     ship_data = ShipData()
-    os_queue_name = 'OWNER_TO_COLAVO_QUEUE'
-    ts_queue_name = 'OTHER_TO_COLAVO_QUEUE'
+    # os_queue_name = 'OWNER_TO_COLAVO_QUEUE'
+    # ts_queue_name = 'OTHER_TO_COLAVO_QUEUE'
+    os_queue_name = 'os_ship'
+    ts_queue_name = 'ts_ship'
 
     data_queue = queue.Queue()
 
@@ -172,6 +175,29 @@ def calculate_angles(rx, ry):
     return angles
 
 
+def append_dict_to_json(file_path, new_data):
+    """
+    将新的字典数据追加到JSON文件中。
+    :param file_path: 存放JSON的文件路径
+    :param new_data: 要追加的字典数据
+    """
+    data_list = []
+    # 如果文件存在，读取其内容并反序列化为列表
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as file:
+            try:
+                data_list = json.load(file)
+                if not isinstance(data_list, list):
+                    data_list = []
+            except json.JSONDecodeError:
+                pass
+    data_list.append(new_data)
+    # 将更新后的列表序列化为JSON格式并写入文件
+    with open(file_path, 'w', encoding='utf-8') as file:
+        json.dump(data_list, file, ensure_ascii=False, indent=4)
+    print(f"新数据已追加到文件：{file_path}")
+
+
 def callback(ch, method, properties, body, ship_data, stop_event, queue_name, data_queue):
     # 获取mq队列的数据
     global os_ship_start, first_message_received
@@ -191,6 +217,14 @@ def callback(ch, method, properties, body, ship_data, stop_event, queue_name, da
 
 
 def data_process(data_queue):
+    invariant_waypoint = []
+    m = 1852  # 1 海里 = 1852 米
+    safe_tcpa = 10
+    safe_dcpa = 0.5
+    invariant_index = []
+    invariant_shipmeet = [0]
+    max_turn_angle = [30, 60]
+    navigation_state = 'front'
     # 获取一次数据初始化存储列表
     try:
         os_data, ts_data, os_ship_start = data_queue.get(timeout=10)  # 设置超时为 10 秒
@@ -233,8 +267,10 @@ def data_process(data_queue):
             os_ship = convert_latlon_to_xy.ship_latlon_to_xy(os_data)
             os_ship[0] = os_ship[0] - os_start[0]
             os_ship[1] = os_ship[1] - os_start[1]
-            # os_ship[2] = os_ship[2] * 0.51444  # 模拟器本船速度未
+            os_ship[2] = os_ship[2] * 0.51444  # 模拟器本船速度未
             x_os, y_os, sog_os, cog_os = os_ship
+            if sog_os == 0:
+                continue
             # ==============================================================================================================
             # 读取目标船数据
             ts_ships = []  # 定于空列表存放目标船数据
@@ -251,6 +287,8 @@ def data_process(data_queue):
                 ts_data[i] = ts_data[i][:-3]
                 ts_ships[i] = convert_latlon_to_xy.ship_latlon_to_xy(ts_data[i])
                 ts_ships[i][2] = ts_ships[i][2] * 0.51444
+                if ts_ships[i][2] == 0:
+                    ts_ships[i][2] += 0.15
                 # # roll_os = 0.1
             for i in range(len(ts_ships)):
                 ts_ships[i][0] = ts_ships[i][0] - os_start[0]
@@ -259,52 +297,35 @@ def data_process(data_queue):
             # ===================================================================================================
             # 计算避碰算法参数
             (waypoint, cpa, avoid_ship_label, colAvoShipCount, colAvoNegShipCount, colAvoEmgShipCount, osAvoResp,
-             shipMeetProp, shipColAvoProp, shipDCPA, shipTCPA, shipBearing, shipDistance, os_shipBearing, emg_situation)\
+             shipMeetProp, shipColAvoProp, shipDCPA, shipTCPA, shipBearing, shipDistance, os_shipBearing, emg_situation) \
                 = (Encounter_scenario_decision_making.multi_ship_scenario_waypoint(
-                os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os_min, ts_ships_length, max_turn_angle))
-            direct_waypoint = [os_ship[0] + sog_os * math.sin(math.radians(cog_os)) * safe_tcpa * 60,
-                               os_ship[1] + sog_os * math.cos(math.radians(cog_os)) * safe_tcpa * 60]
+                os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os_min, ts_ships_length, max_turn_angle, m))
             # ==========================================================================================================
             # 固定路径点，在船舶有风险时路径点随风险情况改变，无风险时路径点锁定锁定
+            # 判断路径点是否在水里
+            waypoint_latlon = convert_latlon_to_xy.ship_xy_to_latlon([waypoint[0] + reference_point_x],
+                                                                     [waypoint[1] + reference_point_y])
+            waypoint_lat = waypoint_latlon[0][1]
+            waypoint_lon = waypoint_latlon[0][0]
+            on_land = globe.is_land(waypoint_lat, waypoint_lon)
             if len(invariant_waypoint) == 0:
-                invariant_waypoint.append(waypoint)
-            if len(invariant_index) == 0:
-                invariant_index.append(float(avoid_ship_label))
-            # ==========================================================================================================
-            # 条件准备
-            else:
-                distance_to_waypoint = (Encounter_scenario_decision_making.calculate_distance
-                                        (os_ship[0], os_ship[1], invariant_waypoint[0][0], invariant_waypoint[0][1]))
-                # 本船和路径点的距离
-                os_invariant_waypoint_vector = [invariant_waypoint[0][0] - os_ship[0],  # 本船当前位置和固定路径点的向量
-                                                invariant_waypoint[0][1] - os_ship[1]]
-                # 本船当前位置和固定路径点的向量
-                v_os = np.array(
-                    [sog_os * math.sin(math.radians(cog_os)), sog_os * math.cos(math.radians(cog_os))])  # 本船的速度向量
-                angle_os_invariant_waypoint = Encounter_scenario_decision_making.angle_of_vector(v_os,
-                                                                                                 os_invariant_waypoint_vector)  # 本船速度向量与本船和路径点连线的向量夹
-                if avoid_ship_label != float('inf'):
-                    type_index = isinstance(avoid_ship_label, float)
-                    # ==========================================================================================================
-                    if type_index and emg_situation[int(avoid_ship_label)] == 1:
-                        # 判断路径点是否需要变化
-                        invariant_waypoint[0] = waypoint
-                    if not type_index and waypoint != invariant_waypoint[0] and waypoint != direct_waypoint:
-                        invariant_waypoint[0] = waypoint
-                # ==========================================================================================================
-                elif distance_to_waypoint < 150 or angle_os_invariant_waypoint > 90:
-                    # 判断是否到达路径点
-                    if not (max(abs(value) for value in shipTCPA) == 0 and abs(os_ship[0]) >= 0.75 * 1852):
-                        invariant_waypoint.clear()
-                        invariant_waypoint.append(waypoint)
-                # ==========================================================================================================
-                elif avoid_ship_label == float('inf'):  # 判断何时回到原航向
-                    if max(abs(value) for value in shipTCPA) == 0 and abs(os_ship[0]) >= 0.75 * 1852:
-                        towing_point = [
-                            os_ship[0] + os_ship[2] * math.sin(math.radians(cog_os_start)) * 10 * 60,
-                            os_ship[1] + os_ship[2] * math.cos(math.radians(cog_os_start)) * 10 * 60]
-                        invariant_waypoint[0] = towing_point
-                        print("shipTCPA:", shipTCPA)
+                if on_land:
+                    waypoint = [os_ship[0] + sog_os * math.sin(math.radians(cog_os)) * safe_tcpa * 60,
+                                os_ship[1] + sog_os * math.cos(math.radians(cog_os)) * safe_tcpa * 60]
+                    invariant_waypoint.append(waypoint)
+                else:
+                    invariant_waypoint.append(waypoint)
+            invariant_waypoint, navigation_state_pre = invariant_waypoint_update.waypoint_choose(invariant_waypoint,
+                                                                                       waypoint, os_ship,
+                                                                                       avoid_ship_label,
+                                                                                       shipMeetProp,
+                                                                                       emg_situation,
+                                                                                       invariant_index,
+                                                                                       invariant_shipmeet,
+                                                                                       shipTCPA, safe_dcpa, m,
+                                                                                       safe_tcpa, cog_os_start,
+                                                                                       navigation_state)
+            navigation_state = navigation_state_pre
             # ==========================================================================================================
             # 到达路径点轨迹规划
             obstacles_y = []
@@ -315,12 +336,18 @@ def data_process(data_queue):
             start_point = [os_ship[0], os_ship[1]]
             start_x = start_point[0]
             start_y = start_point[1]
+            # 判断是否更新路径点
             end_point = invariant_waypoint[0]
             goal_x = end_point[0]
             goal_y = end_point[1]
+
             '''---------------------APF---start------------------------------'''
             # grid_size = 0.1  # Resolution of the potential rho (m)
+
+            # area_radius = 0.5  # Potential area radius (m)
+
             # area_radius = 0.05  # Potential area radius (m)
+
             # rx_apf, ry_apf = PotentialFieldPlanning.potential_field_planning(start_x, start_y, goal_x, goal_y,
             #                                                                  obstacles_x,
             #                                                                  obstacles_y, grid_size, area_radius)
@@ -340,21 +367,22 @@ def data_process(data_queue):
             # rx_astar, ry_astar = ASPlanner.planning(start_x, start_y, goal_x, goal_y)
             '''---------------------AStar---end-----------------------------'''
             '''---------------------bezier_path---start------------------------------'''
-
             angle_trans = (360 - cog_os) % 360
             angle_trans = (angle_trans + 90) % 360  # 将顺时针纵轴向上为0°的角度数据转化为逆时针横轴向右为0°的角度数据
             start_yaw = np.radians(angle_trans)
             end_yaw = start_yaw
             path, control_points = bezier_path.calc_4points_bezier_path(start_x, start_y, start_yaw, goal_x, goal_y,
                                                                         end_yaw, offset=3)
+
             rx_bezier = path.T[0]
             ry_bezier = path.T[1]
-            '''---------------------bezier_path---start------------------------------'''
+            '''---------------------bezier_path---end------------------------------'''
             rx = rx_bezier
             ry = ry_bezier
             rxfinal, ryfinal = PointDelete.pd(rx, ry)
             angles = calculate_angles(rx, ry)
-            # ========================================================
+            path_point = [[x, y] for x, y in zip(rx, ry)]
+            # ==========================================================================================================
             # 取轨迹上等间隔的十分之的点作为样本点
             num_points = len(rx_bezier) // 10
             # 等间隔取出十分之一的点
@@ -399,6 +427,7 @@ def data_process(data_queue):
             colAvoPathData_keys = ["fastShipPosLon", "fastShipPosLat"]
             colAvoPathData_value = fastShipPos
             colAvoPathData = [dict(zip(colAvoPathData_keys, values)) for values in colAvoPathData_value]
+            path_point_data = [dict(zip(colAvoPathData_keys, values)) for values in path_point]
             colAvoShipData_keys = ["shipMmssiId", "shipName", "shipMeetProp", "shipColAvoProp", "shipDcpa",
                                    "shipTcpa", "shipBearing", "shipDistance"]
             colAvoShipData_value = []
@@ -417,7 +446,19 @@ def data_process(data_queue):
                 "colAvoShipData": colAvoShipData,
                 "msg": "请求成功"
             }
-            print(send_data)
+            ship_data = {
+                "os_ship": os_ship,
+                "ts_ship": ts_ships,
+                "os_shipBearing": os_shipBearing,
+                "colAvoCosSpdData": colAvoCosSpdData,
+                "colAvoData": colAvoData,
+                "colAvoPathData": path_point_data,
+                "colAvoShipData": colAvoShipData,
+            }
+            # ==========================================================================================================
+            # 存储船舶会遇数据
+            if avoid_ship_label != float('inf') or (navigation_state_pre == 'right' or navigation_state_pre == 'left'):
+                append_dict_to_json('D:\\A震兑\\测试视频\\test.json', ship_data)
             # ==========================================================================================================
             # 将决策数据发送到交换机
             # producer_rabbitmq.setup_fanout_exchange_and_queue(
@@ -616,12 +657,5 @@ if __name__ == "__main__":
     rabbitmq_password = 'guest'
     vhost = '/'
     # =====================================================================================================
-    m = 1852  # 1 海里 = 1852 米
-    safe_tcpa = 10
-    safe_dcpa = 0.5
-    condition_num = 0
-    invariant_waypoint = []
-    invariant_index = []
-    max_turn_angle = [30, 60]
     data_process(data_queue)
 

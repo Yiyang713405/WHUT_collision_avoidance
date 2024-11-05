@@ -1,6 +1,5 @@
 import numpy as np
 import math
-# import convert_latlon_to_xy
 
 
 def calculate_dcpa_tcpa(x_os, y_os, sog_os, cog_os, x_ts, y_ts, sog_ts, cog_ts):
@@ -16,7 +15,6 @@ def calculate_dcpa_tcpa(x_os, y_os, sog_os, cog_os, x_ts, y_ts, sog_ts, cog_ts):
     :param cog_ts: 他船的航向
     :return: (dcpa, tcpa)
     """
-
     dx = x_ts - x_os
     dy = y_ts - y_os
 
@@ -60,27 +58,64 @@ def radius_aft(v_ts, ts_ship_length):
     """
     k_ad = 10 ** (0.3591 * math.log10(v_ts/0.51444) + 0.0952)  # 航速单位是米，转化为海里/h
     k_dt = 10 ** (0.5441 * math.log10(v_ts/0.51444) - 0.0795)
-    r_aft = (1 + 0.67 * math.sqrt(k_ad ** 2 + (k_dt / 2) ** 2)) * ts_ship_length * 3
+    r_aft = (1 + 0.67 * math.sqrt(k_ad ** 2 + (k_dt / 2) ** 2)) * ts_ship_length * 1.5  # 本船船舶领域的后侧半径
     return r_aft
 
 
-def headon_waypoint(cog_os, ang_vp_ot, distance_ot, safe_dcpa):
-    d_x = distance_ot * math.sin(math.radians(abs(ang_vp_ot)))
-    d_y = distance_ot * math.cos(math.radians(abs(ang_vp_ot)))
-    distance_waypoint_right = math.sqrt((1.5 * safe_dcpa + d_x) ** 2 + d_y ** 2)
+def takeover_waypoint(cog_os, ang_vp_ot, distance_ot, safe_dcpa,  x_os,  y_os):
+    """
+    计算追越场景下本船的路径带你
+    :param cog_os: 本船航向
+    :param ang_vp_ot: 目标船相对于本船的位置角度
+    :param distance_ot: 本船和目标船之间的距离
+    :param safe_dcpa: dcpa安全阈值
+    :param x_os: 本船x坐标
+    :param y_os: 本船y坐标
+    :return:
+    """
+    d_x = abs(distance_ot * math.sin(math.radians(ang_vp_ot)))
+    d_y = abs(distance_ot * math.cos(math.radians(ang_vp_ot)))  # 本船和目标船之间的距离在本船航向上的分量
+    distance_waypoint_right = math.sqrt((1.5 * safe_dcpa + d_x) ** 2 + d_y ** 2)  # 计算本船到路径点之间的距离
+    distance_waypoint_left = math.sqrt((1.5 * safe_dcpa - d_x) ** 2 + d_y ** 2)
+
+    # 计算夹角（以度数表示）
+    angle_a_rad_right = math.asin((1.5 * safe_dcpa + d_x) / distance_waypoint_right)  # 使用 atan2 函数防止除以零
+    angle_a_deg_right = math.degrees(angle_a_rad_right)  # 转换为度数
+
+    # print(angle_a_deg_right)
+    angle_a_rad_left = math.asin((1.5 * safe_dcpa - d_x) / distance_waypoint_left)  # 使用 atan2 函数防止除以零
+    angle_a_deg_left = math.degrees(angle_a_rad_left)  # 转换为度数
+
+    # print(angle_a_deg_left)
+    cog_waypoint_right = angle_a_deg_right + cog_os
+    cog_waypoint_left = angle_a_deg_left + cog_os  # 路径点和正北方向上的实际夹角
+
+    waypoint_right = [x_os + distance_waypoint_right * math.sin(math.radians(cog_waypoint_right)),
+                      y_os + distance_waypoint_right * math.cos(math.radians(cog_waypoint_right))]
+    waypoint_left = [x_os + distance_waypoint_left * math.sin(math.radians(cog_waypoint_left)),
+                     y_os + distance_waypoint_left * math.cos(math.radians(cog_waypoint_left))]  # 对遇场景路径点
+    return waypoint_right, waypoint_left
+
+
+def headon_waypoint(cog_os, ang_vp_ot, distance_ot, safe_dcpa,  x_os,  y_os):
+    d_x = abs(distance_ot * math.sin(math.radians(ang_vp_ot)))
+    d_y = abs(distance_ot * math.cos(math.radians(ang_vp_ot)))
+    distance_waypoint_right = math.sqrt((1.5 * safe_dcpa - d_x) ** 2 + d_y ** 2)
     distance_waypoint_left = math.sqrt((1.5 * safe_dcpa - d_x) ** 2 + d_y ** 2)
     # 计算夹角（以度数表示）
-    angle_a_rad_right = math.atan2(d_y, 1.5 * safe_dcpa + d_x)  # 使用 atan2 函数防止除以零
-    angle_a_deg_right = 90 - math.degrees(angle_a_rad_right)  # 转换为度数
-    angle_a_rad_left = math.atan2(d_y, 1.5 * safe_dcpa - d_x)  # 使用 atan2 函数防止除以零
-    angle_a_deg_left = 90 - math.degrees(angle_a_rad_left)  # 转换为度数
-    cog_waypoint_right = angle_a_deg_right + cog_os
-    cog_waypoint_left = angle_a_deg_left + cog_os
+    angle_a_rad_right = math.asin((1.5 * safe_dcpa - d_x) / distance_waypoint_right)  # 使用 atan2 函数防止除以零
+    angle_a_deg_right = math.degrees(angle_a_rad_right)  # 转换为度数
+    # print(angle_a_deg_right)
+    angle_a_rad_left = math.asin((1.5 * safe_dcpa - d_x) / distance_waypoint_left)  # 使用 atan2 函数防止除以零
+    angle_a_deg_left = math.degrees(angle_a_rad_left)  # 转换为度数
+    # print(angle_a_deg_left)
+    cog_waypoint_right = cog_os - angle_a_deg_right
+    cog_waypoint_left = cog_os + angle_a_deg_left
 
-    waypoint_right = [distance_waypoint_right * math.sin(math.radians((cog_waypoint_right))),
-                      distance_waypoint_right * math.cos(math.radians((cog_waypoint_right)))]
-    waypoint_left = [distance_waypoint_left * math.sin(math.radians((cog_waypoint_left))),
-                     distance_waypoint_left * math.cos(math.radians((cog_waypoint_left)))]
+    waypoint_right = [x_os + distance_waypoint_right * math.sin(math.radians(cog_waypoint_right)),
+                      y_os + distance_waypoint_right * math.cos(math.radians(cog_waypoint_right))]
+    waypoint_left = [x_os + distance_waypoint_left * math.sin(math.radians(cog_waypoint_left)),
+                     y_os + distance_waypoint_left * math.cos(math.radians(cog_waypoint_left))]
     return waypoint_right, waypoint_left
 
 
@@ -127,6 +162,18 @@ def cross_product(vector_a, vector_b):
 
 
 def real_angle(x_os, y_os, sog_os, cog_os, x_ts, y_ts, sog_ts, cog_ts):
+    """
+    计算向量的实际夹角，因为夹角计算函数得到的是向量夹角的绝对值，要转换为实际值
+    :param x_os:
+    :param y_os:
+    :param sog_os:
+    :param cog_os:
+    :param x_ts:
+    :param y_ts:
+    :param sog_ts:
+    :param cog_ts:
+    :return:
+    """
     sog_vector_os = np.array([sog_os * math.sin(math.radians(cog_os)), sog_os * math.cos(math.radians(cog_os)), 0])
     sog_vector_ts = np.array([sog_ts * math.sin(math.radians(cog_ts)), sog_ts * math.cos(math.radians(cog_ts)), 0])
     relative_position_vector = np.array([x_ts - x_os, y_ts - y_os, 0])
@@ -135,10 +182,10 @@ def real_angle(x_os, y_os, sog_os, cog_os, x_ts, y_ts, sog_ts, cog_ts):
     angle_v_ot = angle_of_vector(sog_vector_os, sog_vector_ts)
 
     # 计算二维向量叉积的标量值
-    position_angle_cr = cross_product(sog_vector_os, relative_position_vector)[2]
+    position_angle_cr = cross_product(sog_vector_os, relative_position_vector)[2]  # 根据叉乘得到的数值判断夹角的正负
     sog_angle_cr = cross_product(sog_vector_os, sog_vector_ts)[2]
-    position_angle_cr = round(position_angle_cr, 2)
-    sog_angle_cr = round(sog_angle_cr, 2)
+    # position_angle_cr = round(position_angle_cr, 2)
+    # sog_angle_cr = round(sog_angle_cr, 2)
 
     # 只考虑叉积在z轴上的分量
     if position_angle_cr > 0:
@@ -158,7 +205,8 @@ def real_angle(x_os, y_os, sog_os, cog_os, x_ts, y_ts, sog_ts, cog_ts):
     return angle_vp_ot, angle_v_ot
 
 
-def single_ship_scenario_waypoint(ship_os, ship_ts, ts_ship_length, safe_dcpa, safe_tcpa, max_turn_angle):
+def single_ship_scenario_waypoint(ship_os, ship_ts, ts_ship_length, safe_dcpa, safe_tcpa, max_turn_angle,
+                                  m, f1, f2, f3, f4, f5, f6):
     """
     计算两船的路径点
     :param ship_os: 船舶状态参数元组
@@ -171,11 +219,13 @@ def single_ship_scenario_waypoint(ship_os, ship_ts, ts_ship_length, safe_dcpa, s
     """
     # -------------------------------------------------------------------------------------------------------
     # 单位转换，经纬度转换
-    safe_dcpa = safe_dcpa * 1852
+    safe_dcpa = safe_dcpa * m
     safe_tcpa = safe_tcpa * 60
     emg_num = 0
     x_os, y_os, sog_os, cog_os = ship_os
     x_ts, y_ts, sog_ts, cog_ts = ship_ts
+    sog_os_y = abs(sog_os * math.cos(math.radians(cog_os)))
+    sog_ts_y = abs(sog_ts * math.cos(math.radians(cog_ts)))  # 船舶航速在y方向上的分量
     # 计算目标船的领域半径
     r_aft = radius_aft(sog_ts, ts_ship_length)  # 单位米
     # 计算两船的dcpa和tcpa
@@ -183,7 +233,6 @@ def single_ship_scenario_waypoint(ship_os, ship_ts, ts_ship_length, safe_dcpa, s
     dcpa = round(dcpa, 2)
     tcpa = round(tcpa, 2)
     shipmeetprop = 0  # 他船会遇属性（0：初始状态，1：被追越，2：右前方船， 3：有横后方船， 4：后方来船， 5：左舷来船， 6：对遇）
-    hypotenuse_length = (1.5 * safe_dcpa - dcpa) / math.sin(math.radians(max_turn_angle[0]))  # 斜边长
     # -------------------------------------------------------------------------------------------------------
     # 判断两船距离是否在6海里范围内
     distance_os_ts = calculate_distance(x_os, y_os, x_ts, y_ts)
@@ -191,95 +240,114 @@ def single_ship_scenario_waypoint(ship_os, ship_ts, ts_ship_length, safe_dcpa, s
                 y_os + sog_os * math.cos(math.radians(cog_os)) * safe_tcpa]
     angle_vp_ot, angle_v_ot = real_angle(x_os, y_os, sog_os, cog_os, x_ts, y_ts, sog_ts, cog_ts)
     angle_vp_to, angle_v_to = real_angle(x_ts, y_ts, sog_ts, cog_ts, x_os, y_os, sog_os, cog_os)
-    waypoint_right, waypoint_left = headon_waypoint(cog_os, angle_vp_ot, distance_os_ts, safe_dcpa)
+    headon_waypoint_right, headon_waypoint_left = headon_waypoint(cog_os, angle_vp_ot, distance_os_ts, safe_dcpa, x_os, y_os)
+    takeover_waypoint_right, takeover_waypoint_left = takeover_waypoint(cog_os, angle_vp_ot, distance_os_ts, safe_dcpa, x_os,  y_os)
     if dcpa <= safe_dcpa and 0 < tcpa <= safe_tcpa:  # 有风险的情况下判断会遇态势
         # 判断两船相遇场景
         #  给出路径点，然后船舶按照路径点航行直到dcpa和tcpa到安全范围，回到原航向，继续航行，直到两船错过，回到原航线
         #  1、追越场景--------------------------------------------------------------
-        if (-6 <= angle_v_ot <= 6) and (sog_os > sog_ts) and (-90 < angle_vp_ot < 90):    # 与本船航速夹角-6到6，在本船前方，速度小于本船
+        if (f1 <= angle_v_ot <= f2) and (sog_os_y > sog_ts_y) and (-90 < angle_vp_ot < 90):     # 与本船航速夹角-6到6，在本船前方，速度小于本船
             if dcpa == 0 or angle_vp_ot < 0:
-                waypoint = waypoint_left
+                waypoint = takeover_waypoint_left
                 shipmeetprop = 1
             else:
-                waypoint = waypoint_right
+                waypoint = takeover_waypoint_right
                 shipmeetprop = 1
-        if (-6 <= angle_vp_ot <= 6) and (-90 < angle_v_ot < 90):  # 在本船前方-6到6的区域内，与本船航速夹角-90到90
+        if (f1 <= angle_vp_ot <= f2) and (-30 < angle_v_ot < 30):  # 在本船前方-6到6的区域内，与本船航速夹角-90到90
             if angle_vp_ot < 0:
-                waypoint = waypoint_left
+                waypoint = takeover_waypoint_left
                 shipmeetprop = 1
             else:
-                waypoint = waypoint_right
+                waypoint = takeover_waypoint_right
                 shipmeetprop = 1
-        if 112.5 < angle_vp_to < 180 and -67.5 <= angle_v_ot < -6:
-            print('特殊情况')
-            waypoint = [x_os + 1852 * math.sin(math.radians(cog_ts)),
-                        y_os + 1852 * math.cos(math.radians(cog_ts))]
+        if f4 < angle_vp_to < f5 and f2 <= angle_v_ot < f3:
+            headon_waypoint_right, headon_waypoint_left = headon_waypoint(cog_os, angle_vp_ot, distance_os_ts,
+                                                                          safe_dcpa, x_os, y_os)
+            waypoint = takeover_waypoint_left
             shipmeetprop = 1
-        if -180 < angle_vp_to < -112.5 and 6 <= angle_v_ot < 67.5:
-            cpa = ([x_ts + (sog_ts * math.sin(math.radians(cog_ts)) * tcpa),
-                    y_ts + (sog_ts * math.cos(math.radians(cog_ts)) * tcpa), 0])
-            waypoint = [cpa[0] - r_aft * math.sin(math.radians(cog_ts)),
-                        cpa[1] - r_aft * math.cos(math.radians(cog_ts))]
+        if -f5 < angle_vp_to < f6 and -f3 <= angle_v_ot < f1:
+            waypoint = takeover_waypoint_right
             shipmeetprop = 1
         #  2、计算对遇场景路径点-----------------------------------------------------------
-        if (-180 <= angle_v_ot <= -174 or 174 <= angle_v_ot <= 180) and (-90 < angle_vp_ot < 90):
+        if (-f5 <= angle_v_ot <= (-f5 + f2) or (f5 - f2) <= angle_v_ot <= f5) and (-90 < angle_vp_ot < 90):
             if dcpa == 0 or angle_vp_ot < 0:
-                waypoint = waypoint_left
+                waypoint = headon_waypoint_left
                 shipmeetprop = 6
             else:
-                waypoint = waypoint_right
+                waypoint = headon_waypoint_right
                 shipmeetprop = 6
-        if (-6 <= angle_vp_ot <= 6) and (-180 <= angle_v_ot <= -90 or 90 <= angle_v_ot <= 180):
+        if (f1 <= angle_vp_ot <= f2) and (-f5 <= angle_v_ot <= (-f5 + 30) or (f5 - 30) <= angle_v_ot <= f5):
             # 在本船前方-6到6的区域内，与本船航速夹角
             if angle_vp_ot < 0:
-                waypoint = waypoint_left
+                waypoint = headon_waypoint_left
                 shipmeetprop = 6
             else:
-                waypoint = waypoint_right
+                waypoint = headon_waypoint_right
                 shipmeetprop = 6
         #  4、计算交叉会遇场景路径点-----------------------------------------------------------
-        if not (-180 < angle_vp_to < -112.5 or 112.5 < angle_vp_to < 180):
-            if (6 < angle_vp_ot <= 67.5) and (-174 < angle_v_ot < -6):
-                # cpa = ([x_ts + (sog_ts * math.sin(math.radians(cog_ts)) * tcpa),
-                #         y_ts + (sog_ts * math.cos(math.radians(cog_ts)) * tcpa), 0])
-                # waypoint = [cpa[0] - r_aft * math.sin(math.radians(cog_ts)),
-                #             cpa[1] - r_aft * math.cos(math.radians(cog_ts))]
-                right, left = headon_waypoint(angle_vp_ot - 6, 6, distance_os_ts, safe_dcpa)
-                waypoint = right
+        if not (-f5 < angle_vp_to < f6 or f4 < angle_vp_to < f5):
+            if (f2 < angle_vp_ot <= f3) and ((-f5 + f2) < angle_v_ot < f1):
+                cpa = ([x_ts + (sog_ts * math.sin(math.radians(cog_ts)) * tcpa),
+                        y_ts + (sog_ts * math.cos(math.radians(cog_ts)) * tcpa), 0])
+                waypoint_crossing = [cpa[0] - r_aft * math.sin(math.radians(cog_ts)),
+                                     cpa[1] - r_aft * math.cos(math.radians(cog_ts))]
+                angle_vp_cpa, angle_v_cpa = real_angle(x_os, y_os, sog_os, cog_os, waypoint_crossing[0],
+                                                       waypoint_crossing[1], sog_ts, cog_ts)
+                distance_cpa = calculate_distance(x_os, y_os, waypoint_crossing[0], waypoint_crossing[1])
+                distance_waypoint = math.sqrt(distance_cpa ** 2 + safe_dcpa ** 2)
+                ang_waypoint = math.asin(safe_dcpa / distance_waypoint)  # 使用 atan2 函数防止除以零
+                ang_waypoint_deg = math.degrees(ang_waypoint)  # 转换为度数
+                cog_waypoint = cog_os + angle_vp_cpa + ang_waypoint_deg
+                waypoint = [x_os + distance_waypoint * math.sin(math.radians(cog_waypoint)),
+                            y_os + distance_waypoint * math.cos(math.radians(cog_waypoint))]
                 shipmeetprop = 2
             # ---------------------------------------------------
             # 特殊情况，本船右转或者减速
-            elif 67.5 <= angle_vp_ot <= 112.5 and -112.5 <= angle_v_ot < 0:
-                # if -112.5 <= cog_ts < -67.5:
-                waypoint = [x_os + 1852 * math.sin(math.radians(cog_os + max_turn_angle[1])),
-                            y_os + 1852 * math.cos(math.radians(cog_os + max_turn_angle[1]))]
-                # if -67.5 <= cog_ts < 0:
-                # cpa = ([x_ts + (sog_ts * math.sin(math.radians(cog_ts)) * tcpa),
-                #         y_ts + (sog_ts * math.cos(math.radians(cog_ts)) * tcpa), 0])
-                # waypoint = [cpa[0] - r_aft * math.sin(math.radians(cog_ts)),
-                #             cpa[1] - r_aft * math.cos(math.radians(cog_ts))]
+            elif f3 <= angle_vp_ot <= f4 and f6 <= angle_v_ot < 0:
+                if cog_ts > 180:
+                    cog_ts = cog_ts - 360
+                if f6 <= cog_ts < -f3:
+                    waypoint = [x_os + 3 * safe_dcpa * math.sin(math.radians(cog_os - max_turn_angle[0])),
+                                y_os + 3 * safe_dcpa * math.cos(math.radians(cog_os - max_turn_angle[0]))]
+                if -f3 <= cog_ts < 0:
+                    if abs(x_os - x_ts) >= 1.1 * safe_dcpa:
+                        waypoint = [x_os + 2 * safe_dcpa * math.sin(math.radians(cog_ts)),
+                                    y_os + 2 * safe_dcpa * math.cos(math.radians(cog_ts))]
+                    else:
+                        waypoint = [x_os + 2 * safe_dcpa * math.sin(math.radians(cog_ts - max_turn_angle[0])),
+                                    y_os + 2 * safe_dcpa * math.cos(math.radians(cog_ts - max_turn_angle[0]))]
                 shipmeetprop = 3
-
         # 5、 目标船在本船112.5°到-112.5°
-        if not (-180 < angle_vp_to < -112.5 or 112.5 < angle_vp_to < 180):
-            if 112.5 <= angle_vp_ot <= 180 or -180 <= angle_vp_ot < -112.5:
+        if not (-f5 < angle_vp_to < f6 or f4 < angle_vp_to < f5):
+            if f4 <= angle_vp_ot <= f5 or -f5 <= angle_vp_ot < f6:
                 waypoint = [x_os + sog_os * math.sin(math.radians(cog_os)) * safe_tcpa,
                             y_os + sog_os * math.cos(math.radians(cog_os)) * safe_tcpa]
-                if 0 < tcpa < 0.8 * safe_tcpa and 0 < dcpa < 0.8 * safe_dcpa and 112.5 <= angle_vp_ot < 180:
-                    waypoint = [x_os + 1 * 1852 * math.sin(math.radians(cog_os + max_turn_angle[1])),
-                                y_os + 1 * 1852 * math.cos(math.radians(cog_os + max_turn_angle[1]))]   # 左转到指定位置
+                if ((0 < tcpa < 0.8 * safe_tcpa) and (0 < dcpa < safe_dcpa) and (f4 <= angle_vp_ot < f5)
+                        and (-f3 < angle_v_ot < 0)):
+                    if abs(x_os - x_ts) > 1.1 * safe_dcpa:
+                        waypoint = [x_os + 2 * safe_dcpa * math.sin(math.radians(cog_ts)),
+                                    y_os + 2 * safe_dcpa * math.cos(math.radians(cog_ts))]   # 左转到指定位置
+                    else:
+                        waypoint = [x_os + 2 * safe_dcpa * math.sin(math.radians(cog_ts - max_turn_angle[0])),
+                                    y_os + 2 * safe_dcpa * math.cos(math.radians(cog_ts - max_turn_angle[0]))]
                     emg_num = 1
-                elif 0 < tcpa < 0.8 * safe_tcpa and 0 < dcpa < 0.8 * safe_dcpa and -180 <= angle_vp_ot < -112.5:
-                    waypoint = [x_os + 1 * 1852 * math.sin(math.radians(cog_os + max_turn_angle[1])),
-                                y_os + 1 * 1852 * math.cos(math.radians(cog_os + max_turn_angle[1]))]
+                elif (0 < tcpa < 0.8 * safe_tcpa) and (0 < dcpa < safe_dcpa) and (-f5 <= angle_vp_ot < f6)\
+                        and (0 < angle_v_ot < f3):
+                    if abs(x_os - x_ts) > 1.1 * safe_dcpa:
+                        waypoint = [x_os + 2 * safe_dcpa * math.sin(math.radians(cog_ts)),
+                                    y_os + 2 * safe_dcpa * math.cos(math.radians(cog_ts))]
+                    else:
+                        waypoint = [x_os + 2 * safe_dcpa * math.sin(math.radians(cog_ts + max_turn_angle[0])),
+                                    y_os + 2 * safe_dcpa * math.cos(math.radians(cog_ts + max_turn_angle[0]))]
                     emg_num = 1
                 shipmeetprop = 4
-            if -112.5 <= angle_vp_ot < -6:
+            if f6 <= angle_vp_ot < f1 and not (f1 <= angle_v_ot <= f2 or -f5 <= angle_v_ot <= (-f5 + f2) or
+                                               (f5 - f2) <= angle_v_ot <= f5):
                 waypoint = [x_os + sog_os * math.sin(math.radians(cog_os)) * safe_tcpa,
                             y_os + sog_os * math.cos(math.radians(cog_os)) * safe_tcpa]
-                if 0 < tcpa < 0.8 * safe_tcpa and 0 < dcpa < 0.8 * safe_dcpa:
-                    waypoint = [x_os + 1 * 1852 * math.sin(math.radians(cog_os + max_turn_angle[1])),
-                                y_os + 1 * 1852 * math.cos(math.radians(cog_os + max_turn_angle[1]))]   # 右转到指定位置
+                if 0 < tcpa < 0.8 * safe_tcpa and 0 < dcpa < safe_dcpa:
+                    waypoint = [x_os + 2 * safe_dcpa * math.sin(math.radians(cog_os + max_turn_angle[0])),
+                                y_os + 2 * safe_dcpa * math.cos(math.radians(cog_os + max_turn_angle[0]))]   # 右转到指定位置
                     emg_num = 1  # 紧急避碰参数
                 shipmeetprop = 5
     else:
@@ -288,11 +356,11 @@ def single_ship_scenario_waypoint(ship_os, ship_ts, ts_ship_length, safe_dcpa, s
     return waypoint, dcpa, tcpa, shipmeetprop, angle_vp_ot, distance_os_ts, angle_vp_to, emg_num
 
 
-def multi_ship_scenario_waypoint(os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os_min, ts_ships_length, max_turn_angle):
+def multi_ship_scenario_waypoint(os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os_min, ts_ships_length, max_turn_angle, m, f1, f2, f3, f4, f5, f6):
     # 初始化参数
     single_dcpa = safe_dcpa
     single_tcpa = safe_tcpa
-    safe_dcpa = safe_dcpa * 1852
+    safe_dcpa = safe_dcpa * m
     safe_tcpa = safe_tcpa * 60
     x_os, y_os, sog_os, cog_os = os_ship
     avoid_ship_label = float('inf')
@@ -333,7 +401,7 @@ def multi_ship_scenario_waypoint(os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os
     f_num = 0
     for i in range(len(ts_ships)):
         w, d, t, shipmeetprop, angle_vp_ot, distance_os_ts, angle_vp_to, emg_num \
-            = single_ship_scenario_waypoint(os_ship, ts_ships[i], ts_ships_length[i], single_dcpa, single_tcpa, max_turn_angle)
+            = single_ship_scenario_waypoint(os_ship, ts_ships[i], ts_ships_length[i], single_dcpa, single_tcpa, max_turn_angle, m, f1, f2, f3, f4, f5, f6)
         shipDCPA.append(d)
         shipTCPA.append(t)
         shipBearing.append(angle_vp_ot)
@@ -342,7 +410,7 @@ def multi_ship_scenario_waypoint(os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os
         shipMeetProp.append(shipmeetprop)
         emg_situation.append(emg_num)
         x, y, sog, cog = ts_ships[i]
-        angle_vp, angle_v = real_angle(x_os, y_os, sog_os, cog_os, x, y, sog, cog)
+        # angle_vp, angle_v = real_angle(x_os, y_os, sog_os, cog_os, x, y, sog, cog)
         if t < safe_tcpa and d < safe_dcpa and shipmeetprop != 4 and shipmeetprop != 5:  # 判断处于本船避让区间的风险目标船
             risk_ship_dcpa_f.append(d)
             risk_ship_tcpa_f.append(t)
@@ -350,7 +418,7 @@ def multi_ship_scenario_waypoint(os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os
             risk_ship_waypoint_f.append(w)
             colAvoShipCount += 1
             f_num += 1
-            if 0 < t < 0.8 * safe_tcpa and 0 < d < 0.8 * safe_dcpa:
+            if 0 < t < 0.8 * safe_tcpa and 0 < d < safe_dcpa:
                 colAvoEmgShipCount += 1
                 shipColAvoProp.append(2)
             else:
@@ -363,7 +431,7 @@ def multi_ship_scenario_waypoint(os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os
             risk_ship_index_b.append(i)
             risk_ship_waypoint_b.append(w)
             colAvoShipCount += 1
-            if 0 < t < 0.8 * safe_tcpa and 0 < d < 0.8 * safe_dcpa:
+            if 0 < t < 0.8 * safe_tcpa and 0 < d < safe_dcpa:
                 colAvoEmgShipCount += 1
                 shipColAvoProp.append(2)
             else:
@@ -375,8 +443,6 @@ def multi_ship_scenario_waypoint(os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os
     # 针对处于不同区间的目标船，计算各自区间风险最高的船
     # ==========================================================================================================
     # 本船避让区间
-    # risk_ship_index_f = [int(x) for x in risk_ship_index_f]
-    # risk_ship_index_b = [float(x) for x in risk_ship_index_b]
     if len(risk_ship_dcpa_f) != 0:
         for k in range(len(risk_ship_dcpa_f)):
             if 0 <= risk_ship_dcpa_f[k] < dcpa_f:  # 有风险的情况下d越小越紧急
@@ -412,40 +478,6 @@ def multi_ship_scenario_waypoint(os_ship, ts_ships, safe_dcpa, safe_tcpa, sog_os
                y + sog * tcpa_f * math.cos(math.radians(cog))]
         waypoint = waypoint_f
         avoid_ship_label = avoid_ship_label_f
-        # if -6 <= angle_vp <= 67.5:   # 右前方或者对遇、追越来船且右横后方也来船的情况下减速
-        #     for i in range(len(ts_ships)):
-        #         if i != avoid_ship_label_f:
-        #             x_i, y_i, sog_i, cog_i = ts_ships[i]
-        #             angle_vp_i, angle_v_i = real_angle(x_os, y_os, sog_os, cog_os, x_i, y_i, sog_i, cog_i)
-        #             distance_i = calculate_distance(x_os, y_os, x_i, y_i)
-        #             if 67.5 <= angle_vp_i <= 112.5 and -112.5 < angle_v_i < 22.5:
-        #                 if -112.5 <= cog_i < -67.5:
-        #                     waypoint = [x_os + 1 * 1852 * math.sin(math.radians(cog_os + max_turn_angle)),
-        #                                 y_os + 1 * 1852 * math.cos(math.radians(cog_os + max_turn_angle))]
-        #                 if -67.5 <= cog_i < 0:
-        #                     waypoint = [x_os + 1 * 1852 * math.sin(math.radians(cog_i)),
-        #                                 y_os + 1 * 1852 * math.cos(math.radians(cog_i))]
-        #             elif 112.5 <= angle_vp_i <= 180 and distance_i < 2 * 1852 and -90 < cog_i < 22.5:
-        #                 waypoint = [x_os + 1 * 1852 * math.sin(math.radians(cog_os + max_turn_angle)),
-        #                             y_os + 1 * 1852 * math.cos(math.radians(cog_os + max_turn_angle))]
-                        # if os_ship[2] > sog_os_min:
-                        #     os_ship[2] -= 1 / 30
-        # elif 67.5 <= angle_vp <= 112.5 and -112.5 < angle_v < 0:
-        #     if -112.5 <= cog < -67.5:
-        #         waypoint = [x_os + 1852 * math.sin(math.radians(cog_os + max_turn_angle)),
-        #                     y_os + 1852 * math.cos(math.radians(cog_os + max_turn_angle))]
-        #     if -67.5 <= cog < 0:
-        #         waypoint = [x_os + 1 * 1852 * math.sin(math.radians(cog)),
-        #                     y_os + 1 * 1852 * math.cos(math.radians(cog))]
-            # if os_ship[2] > sog_os_min:
-            #     os_ship[2] -= 1 / 30
-                # 判断本船的纵向速度是否大于右侧横向来船的纵向速度，如果是，那本船左转，否则，本船减速
-            # 判断本船的纵向速度是否大于右侧横向来船的纵向速度，如果是，那本船右转，否则，本船减速
-        # else:
-        #     cpa = [x + sog * tcpa_f * math.sin(math.radians(cog)),
-        #            y + sog * tcpa_f * math.cos(math.radians(cog))]
-        #     waypoint = waypoint_f
-        #     avoid_ship_label = avoid_ship_label_f
     elif f_num == 0 and (dcpa_b < safe_dcpa and tcpa_b < safe_tcpa):  # 可能存在问题
         x, y, sog, cog = ts_ships[int(avoid_ship_label_b)]
         cpa = [x + sog * tcpa_b * math.sin(math.radians(cog)),
