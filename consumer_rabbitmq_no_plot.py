@@ -2,7 +2,6 @@ import numpy as np
 from Tools import convert_latlon_to_xy
 from Tools import Encounter_scenario_decision_making
 from Tools import PointDelete
-from service.tanker_VLCC8_L333 import VLCC8L333
 import invariant_waypoint_update
 import os
 from PlanningAlgorithm import bezier_path
@@ -17,8 +16,6 @@ import json
 import copy
 # from PlanningAlgorithm import PotentialFieldPlanning
 # from PlanningAlgorithm import a_star
-
-ship_param = VLCC8L333()
 
 
 data_queue = []  # 用于存放从两个队列中获取的数据
